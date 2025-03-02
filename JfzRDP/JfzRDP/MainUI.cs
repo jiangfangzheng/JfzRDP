@@ -162,7 +162,7 @@ namespace JfzRDP
             AdvancedSettings7.AuthenticationLevel = 0;
             AdvancedSettings7.EnableCredSspSupport = true;
             // 字体平滑、远程壁纸等设置
-            AdvancedSettings7.PerformanceFlags = 384;
+            AdvancedSettings7.PerformanceFlags = 400;
 
             IMsTscNonScriptable secured = (IMsTscNonScriptable)axMsTscAxNotSafeForScripting1.GetOcx();
             secured.ClearTextPassword = serverSettings.Password;
