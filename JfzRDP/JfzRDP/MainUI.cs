@@ -1,20 +1,15 @@
 ﻿using AxMSTSCLib;
 using MSTSCLib;
 using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
 using System.Drawing;
 using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.Json;
 using System.Windows.Forms;
 
-namespace JfzRDC
+namespace JfzRDP
 {
-    public partial class Form1 : Form
+    public partial class MainUI : Form
     {
 
         // Windows API 函数
@@ -33,7 +28,7 @@ namespace JfzRDC
         private const int CustomMenuItem2ID = 1001;
 
 
-        public Form1()
+        public MainUI()
         {
             InitializeComponent();
             // 设置连接超时时间（单位：毫秒）
@@ -108,6 +103,35 @@ namespace JfzRDC
             }
             // 获取服务器信息Json内容
             string filePath = Path.Combine(AppContext.BaseDirectory, "server.json");
+            // 如果文件不存在则创建
+            try
+            {
+                if (!File.Exists(filePath))
+                {
+                    MessageBox.Show("已在程序目录下默认生成server.json，请修改为您的服务器信息！", "您似乎是第一次使用本软件或server.json文件丢失");
+                    // 定义一个对象
+                    var serverSettingsObj = new ServerSettings
+                    {
+                        Server = "127.0.0.1",
+                        UserName = "username",
+                        Password = "password",
+                        Port = 3389,
+                        Width = 1920,
+                        Height = 1080
+                    };
+                    // 将对象序列化为 JSON 字符串
+                    var options = new JsonSerializerOptions { WriteIndented = true };
+                    string serverSettingsStr = JsonSerializer.Serialize(serverSettingsObj, options);
+                    // 创建文件并写入字符串
+                    File.WriteAllText(filePath, serverSettingsStr);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"创建文件时出错: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+
             string jsonContent = File.ReadAllText(filePath);
             ServerSettings serverSettings = JsonSerializer.Deserialize<ServerSettings>(jsonContent);
             // 修改分辨率：非最大化使用配置值，最大化时使用当前分辨率
@@ -213,9 +237,6 @@ namespace JfzRDC
 
             // 显示错误信息
             this.Text = this.Text + " Error:" + errorMessage;
-            // axMsTscAxNotSafeForScripting1.ConnectingText = errorMessage;
-            // axMsTscAxNotSafeForScripting1.DisconnectedText = errorMessage;
-            // MessageBox.Show(errorMessage, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
 
         // 断开连接事件
@@ -223,7 +244,6 @@ namespace JfzRDC
         {
             // 显示断开连接信息
             axMsTscAxNotSafeForScripting1.DisconnectedText = $"连接已断开，原因代码：{e.discReason}";
-            // MessageBox.Show($"连接已断开，原因代码：{e.discReason}", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
     }
 }

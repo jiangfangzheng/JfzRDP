@@ -1,8 +1,8 @@
 ﻿using AxMSTSCLib;
 
-namespace JfzRDC
+namespace JfzRDP
 {
-    partial class Form1
+    partial class MainUI
     {
         /// <summary>
         /// 必需的设计器变量。
@@ -30,7 +30,7 @@ namespace JfzRDC
         /// </summary>
         private void InitializeComponent()
         {
-            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(Form1));
+            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(MainUI));
             this.axMsTscAxNotSafeForScripting1 = new AxMSTSCLib.AxMsTscAxNotSafeForScripting();
             ((System.ComponentModel.ISupportInitialize)(this.axMsTscAxNotSafeForScripting1)).BeginInit();
             this.SuspendLayout();
