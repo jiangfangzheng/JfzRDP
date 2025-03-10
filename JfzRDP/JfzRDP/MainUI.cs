@@ -1,11 +1,9 @@
 ﻿using AxMSTSCLib;
 using MSTSCLib;
 using System;
-using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using System.Threading;
 using System.Windows.Forms;
 
 namespace JfzRDP
@@ -237,6 +235,7 @@ namespace JfzRDP
             AdvancedSettings7.ConnectToAdministerServer = true;
             AdvancedSettings7.AuthenticationLevel = 0;
             AdvancedSettings7.EnableCredSspSupport = true;
+            AdvancedSettings7.EnableAutoReconnect = true;
             // 字体平滑、远程壁纸等设置
             AdvancedSettings7.PerformanceFlags = 400;
             // 密码
