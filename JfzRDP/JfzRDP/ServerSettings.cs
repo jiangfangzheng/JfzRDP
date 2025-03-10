@@ -8,11 +8,11 @@ namespace JfzRDP
 {
     public class ServerSettings
     {
-        public string Server { get; set; }
-        public string UserName { get; set; }
-        public string Password { get; set; }
-        public int Port { get; set; }
-        public int Width { get; set; }
-        public int Height { get; set; }
+        public ServerSettings()
+        {
+            ServerList = new List<ServerSetting>();
+        }
+
+        public List<ServerSetting> ServerList { get; set; }
     }
 }

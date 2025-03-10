@@ -5,40 +5,104 @@ using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace JfzRDP
 {
     public partial class MainUI : Form
     {
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetSystemMenu(IntPtr hWnd, bool bRevert);
+        [DllImport("user32.dll")]
+        private static extern bool AppendMenu(IntPtr hMenu, int uFlags, int uIDNewItem, string lpNewItem);
+
+        private string title = "异想家RDP远程桌面管理 v1.0";
+        // 服务器列表
+        private ServerSettings serverSettings = new ServerSettings();
 
         // Windows API 函数
         private const int WM_SYSCOMMAND = 0x0112;
         private const int MF_STRING = 0x0000;
         private const int MF_SEPARATOR = 0x0800;
+        // 自定义菜单项的第一个ID
+        private const int firstCustomID = 1000;
+        // 自定义菜单项的 断开连接 ID
+        private int disconnectID = -1;
+        // 当前连接的ServerSettings数组的下标
+        private int currentConnectIndex = -1;
 
-        [DllImport("user32.dll")]
-        private static extern IntPtr GetSystemMenu(IntPtr hWnd, bool bRevert);
-
-        [DllImport("user32.dll")]
-        private static extern bool AppendMenu(IntPtr hMenu, int uFlags, int uIDNewItem, string lpNewItem);
-
-        // 自定义菜单项的 ID
-        private const int CustomMenuItem1ID = 1000;
-        private const int CustomMenuItem2ID = 1001;
-
+        // 锁
+        private static volatile int lock1 = 1;
 
         public MainUI()
         {
             InitializeComponent();
+            // 载入服务器配置文件
+            LoadServerLists();
+            // 添加自定义菜单项
+            AddCustomMenuItems();
+
             // 设置连接超时时间（单位：毫秒）
             // this.axMsTscAxNotSafeForScripting1.AdvancedSettings7.ConnectionTimeout = 10000; // 10秒
             // 绑定事件
             this.axMsTscAxNotSafeForScripting1.OnDisconnected += RdpClient_OnDisconnected;
             // 订阅 FormClosing 事件
             this.FormClosing += MainForm_FormClosing;
-            // 添加自定义菜单项
-            AddCustomMenuItems();
+        }
+
+        private void LoadServerLists()
+        {
+            // 从json配置获取服务器信息
+            string filePath = Path.Combine(AppContext.BaseDirectory, "server.json");
+            if (!File.Exists(filePath))
+            {
+                // 如果文件不存在则创建
+                CreateDefaultServerFile(filePath);
+            }
+            string jsonContent = File.ReadAllText(filePath);
+            this.serverSettings = JsonSerializer.Deserialize<ServerSettings>(jsonContent);
+        }
+
+        private void CreateDefaultServerFile(string filePath)
+        {
+            try
+            {
+                // 定义对象
+                var serverSettingObj1 = new ServerSetting
+                {
+                    ServerName = "Server1",
+                    Server = "192.168.1.1",
+                    UserName = "abc",
+                    Password = "1",
+                    Port = 3389,
+                    Width = 1920,
+                    Height = 1080
+                };
+                var serverSettingObj2 = new ServerSetting
+                {
+                    ServerName = "Server2",
+                    Server = "192.168.1.2",
+                    UserName = "xyz",
+                    Password = "1",
+                    Port = 3389,
+                    Width = 1280,
+                    Height = 720
+                };
+                var serverSettingsObj = new ServerSettings();
+                serverSettingsObj.ServerList.Add(serverSettingObj1);
+                serverSettingsObj.ServerList.Add(serverSettingObj2);
+                // 将对象序列化为 JSON 字符串
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                string serverSettingsStr = JsonSerializer.Serialize(serverSettingsObj, options);
+                // 创建文件并写入字符串
+                File.WriteAllText(filePath, serverSettingsStr);
+                MessageBox.Show("已在程序目录下默认生成server.json，请修改为您的服务器信息！", "您似乎是第一次使用本软件或server.json文件丢失");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"创建文件时出错: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
@@ -65,10 +129,18 @@ namespace JfzRDP
             IntPtr systemMenuHandle = GetSystemMenu(this.Handle, false);
             // 添加分隔符
             AppendMenu(systemMenuHandle, MF_SEPARATOR, 0, string.Empty);
-            // 添加自定义菜单项
-            AppendMenu(systemMenuHandle, MF_STRING, CustomMenuItem1ID, "连接");
-            AppendMenu(systemMenuHandle, MF_STRING, CustomMenuItem2ID, "断开");
-
+            // 添加服务器列表
+            int i = 0;
+            foreach (ServerSetting server in serverSettings.ServerList)
+            {
+                AppendMenu(systemMenuHandle, MF_STRING, firstCustomID + i, "连接 " + server.ServerName);
+                ++i;
+            }
+            this.disconnectID = firstCustomID + i;
+            // 添加分隔符
+            AppendMenu(systemMenuHandle, MF_SEPARATOR, 0, string.Empty);
+            // 断开当前服务器
+            AppendMenu(systemMenuHandle, MF_STRING, this.disconnectID, "断开当前服务器");
         }
 
         protected override void WndProc(ref Message m)
@@ -78,76 +150,80 @@ namespace JfzRDP
             {
                 // 获取点击的菜单项 ID
                 int menuItemID = m.WParam.ToInt32();
-
                 // 处理自定义菜单项点击
-                switch (menuItemID)
+                if (menuItemID == disconnectID)
                 {
-                    case CustomMenuItem1ID:
-                        ConnectHandle();
-                        break;
-                    case CustomMenuItem2ID:
-                        DisconnectHandle();
-                        break;
+                    DisconnectHandle();
+                }
+                else if (menuItemID >= firstCustomID && menuItemID < disconnectID)
+                {
+                    ConnectHandle(menuItemID - firstCustomID);
                 }
             }
-
             // 调用基类的 WndProc 方法以继续处理其他消息
             base.WndProc(ref m);
         }
 
-        private void ConnectHandle()
+        private void ConnectHandle(int index)
         {
             if (axMsTscAxNotSafeForScripting1.Connected == 1)
             {
-                return;
-            }
-            // 获取服务器信息Json内容
-            string filePath = Path.Combine(AppContext.BaseDirectory, "server.json");
-            // 如果文件不存在则创建
-            try
-            {
-                if (!File.Exists(filePath))
+                // 判断是否是同一服务器连接，是则跳过，不是则断开，继续连新的
+                if (index == currentConnectIndex)
                 {
-                    MessageBox.Show("已在程序目录下默认生成server.json，请修改为您的服务器信息！", "您似乎是第一次使用本软件或server.json文件丢失");
-                    // 定义一个对象
-                    var serverSettingsObj = new ServerSettings
-                    {
-                        Server = "127.0.0.1",
-                        UserName = "username",
-                        Password = "password",
-                        Port = 3389,
-                        Width = 1920,
-                        Height = 1080
-                    };
-                    // 将对象序列化为 JSON 字符串
-                    var options = new JsonSerializerOptions { WriteIndented = true };
-                    string serverSettingsStr = JsonSerializer.Serialize(serverSettingsObj, options);
-                    // 创建文件并写入字符串
-                    File.WriteAllText(filePath, serverSettingsStr);
                     return;
                 }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"创建文件时出错: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                else
+                {
+                    DisconnectHandle();
+                    MessageBox.Show("已断开当前服务器，正在连接新服务器", "提示");
+                    // return;
+                }
             }
 
-            string jsonContent = File.ReadAllText(filePath);
-            ServerSettings serverSettings = JsonSerializer.Deserialize<ServerSettings>(jsonContent);
+            ServerSetting serverSetting = serverSettings.ServerList[index];
             // 修改分辨率：非最大化使用配置值，最大化时使用当前分辨率
             if (this.WindowState != FormWindowState.Maximized)
             {
                 // 非最大化时，计算差值，补偿整个窗口的大小，使得用户配置的大小等于RDP窗口大小
                 int deltaWidth = this.Size.Width - axMsTscAxNotSafeForScripting1.Size.Width;
                 int deltaHeight = this.Size.Height - axMsTscAxNotSafeForScripting1.Size.Height;
-                this.Size = new System.Drawing.Size(serverSettings.Width + deltaWidth, serverSettings.Height + deltaHeight);
-                CenterToScreen(); // 窗体重新居中
+                // 让整个窗口分辨率=RDP显示分辨率+边框(deltaWidth, deltaHeight)
+                this.Size = new System.Drawing.Size(serverSetting.Width + deltaWidth, serverSetting.Height + deltaHeight);
+                // 窗体重新居中
+                CenterToScreen();
             }
+            // 锁定窗口分辨率
             this.MinimumSize = new System.Drawing.Size(this.Size.Width, this.Size.Height);
             this.MaximumSize = new System.Drawing.Size(this.Size.Width, this.Size.Height);
 
-            axMsTscAxNotSafeForScripting1.Server = serverSettings.Server;
-            axMsTscAxNotSafeForScripting1.UserName = serverSettings.UserName;
+            // RDP配置参数
+            SetRdpParam(serverSetting);
+
+            this.Text = title + "    " +
+                serverSetting.ServerName + " " +
+                serverSetting.Server + " " +
+                serverSetting.UserName + " " +
+                serverSetting.Port + " " +
+                axMsTscAxNotSafeForScripting1.Size.Width + "x" + axMsTscAxNotSafeForScripting1.Size.Height + " " +
+                DateTime.Now.ToString("HH:mm:ss") + " ";
+
+            // 连接服务器
+            try
+            {
+                currentConnectIndex = index;
+                axMsTscAxNotSafeForScripting1.Connect();
+            }
+            catch (Exception ex)
+            {
+                HandleRdpException(ex);
+            }
+        }
+
+        private void SetRdpParam(ServerSetting serverSetting)
+        {
+            axMsTscAxNotSafeForScripting1.Server = serverSetting.Server;
+            axMsTscAxNotSafeForScripting1.UserName = serverSetting.UserName;
             axMsTscAxNotSafeForScripting1.DesktopWidth = axMsTscAxNotSafeForScripting1.Size.Width;
             axMsTscAxNotSafeForScripting1.DesktopHeight = axMsTscAxNotSafeForScripting1.Size.Height;
             axMsTscAxNotSafeForScripting1.ConnectingText = "";
@@ -156,32 +232,16 @@ namespace JfzRDP
             IMsRdpClientAdvancedSettings7 AdvancedSettings7 = (IMsRdpClientAdvancedSettings7)axMsTscAxNotSafeForScripting1.AdvancedSettings;
             AdvancedSettings7.RedirectClipboard = true;
             AdvancedSettings7.RedirectDrives = false;
-            AdvancedSettings7.RDPPort = serverSettings.Port;
+            AdvancedSettings7.RDPPort = serverSetting.Port;
             AdvancedSettings7.ConnectToServerConsole = true;
             AdvancedSettings7.ConnectToAdministerServer = true;
             AdvancedSettings7.AuthenticationLevel = 0;
             AdvancedSettings7.EnableCredSspSupport = true;
             // 字体平滑、远程壁纸等设置
             AdvancedSettings7.PerformanceFlags = 400;
-
+            // 密码
             IMsTscNonScriptable secured = (IMsTscNonScriptable)axMsTscAxNotSafeForScripting1.GetOcx();
-            secured.ClearTextPassword = serverSettings.Password;
-
-            this.MaximumSize = new Size(this.Size.Width, this.Size.Height);
-
-            this.Text = "异想家RDP远程桌面管理 v1.0     " + serverSettings.Server + " " + serverSettings.UserName +
-                " " + serverSettings.Port + " " + axMsTscAxNotSafeForScripting1.Size.Width +
-                "x" + axMsTscAxNotSafeForScripting1.Size.Height + " " + DateTime.Now.ToString("HH:mm:ss") + " ";
-
-            try
-            {
-                axMsTscAxNotSafeForScripting1.Connect();
-            }
-            catch (Exception ex)
-            {
-                // 捕获并处理异常
-                HandleRdpException(ex);
-            }
+            secured.ClearTextPassword = serverSetting.Password;
         }
 
         private void DisconnectHandle()
@@ -195,14 +255,13 @@ namespace JfzRDP
             }
             catch (Exception)
             {
-
+                // not to do
             }
             // 修改分辨率
-            //axMsTscAxNotSafeForScripting1.Size = new System.Drawing.Size(624, 411);
             this.MinimumSize = new System.Drawing.Size(640, 480);
             this.MaximumSize = new System.Drawing.Size(9999, 9999);
             this.Size = new System.Drawing.Size(640, 480);
-            this.Text = "异想家RDP远程桌面管理 v1.0";
+            this.Text = title;
         }
 
         // 处理远程桌面连接异常
@@ -242,8 +301,35 @@ namespace JfzRDP
         // 断开连接事件
         private void RdpClient_OnDisconnected(object sender, IMsTscAxEvents_OnDisconnectedEvent e)
         {
+            int code = e.discReason;
+            string reason;
+            // 查询https://learn.microsoft.com/zh-cn/windows/win32/termserv/imstscaxevents-ondisconnected
+            switch (code)
+            {
+                case 0:
+                    reason = "正常断开";
+                    break;
+                case 1:
+                    reason = "网络连接中断";
+                    break;
+                case 2:
+                    reason = "远程计算机已关闭连接";
+                    break;
+                case 3:
+                    reason = "许可证问题";
+                    break;
+                case 4:
+                    reason = "安全层协商失败";
+                    break;
+                case 5:
+                    reason = "远程计算机已关闭连接";
+                    break;
+                default:
+                    reason = $"未知，错误代码 {code}";
+                    break;
+            }
             // 显示断开连接信息
-            axMsTscAxNotSafeForScripting1.DisconnectedText = $"连接已断开，原因代码：{e.discReason}";
+            axMsTscAxNotSafeForScripting1.DisconnectedText = $"连接已断开，原因：{reason}";
         }
     }
 }
