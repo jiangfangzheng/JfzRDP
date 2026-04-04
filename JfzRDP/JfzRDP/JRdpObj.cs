@@ -13,7 +13,7 @@ namespace JfzRDP
         {
             Setting = setting;
             ConnectMsg = connectMsg;
-            RdpClient = new AxMsRdpClient11NotSafeForScripting();
+            RdpClient = null;
             ConnectMsg = "";
             ErrMsg = "";
             Index = -1;
