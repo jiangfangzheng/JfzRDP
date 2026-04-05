@@ -8,17 +8,23 @@ using System.Text;
 using System.Text.Json;
 using System.Windows.Forms;
 using System.Diagnostics;
+using System.Text.Encodings.Web;
+using System.Text.Unicode;
+using System.Linq;
+using System.Drawing;
+using System.Reflection;
 
 namespace JfzRDP
 {
     public partial class MainUI : Form
     {
-        private static string version = "1.1";
-        private string title = "异想家RDP远程桌面管理 v" + version;
+        private static readonly string version = "1.2";
+        private static readonly string title = "异想家RDP远程桌面管理 v" + version;
 
         // 服务器配置列表
         private ServerSettings serverSettings = new ServerSettings();
         private List<JRdpObj> JRdpObjList = new List<JRdpObj>();
+        private Dictionary<string, int> ServerNameToIndexMap = new Dictionary<string, int>();
 
         [DllImport("user32.dll")]
         private static extern IntPtr GetSystemMenu(IntPtr hWnd, bool bRevert);
@@ -32,7 +38,9 @@ namespace JfzRDP
         // 自定义菜单项的第一个ID
         private const int firstCustomID = 1000;
         // 自定义菜单项的 断开连接 ID
-        private int disconnectID = -1;
+        private int disconnectID = firstCustomID - 2;
+        // 自定义菜单项的 重新读取配置 ID
+        private int loadConfigID = firstCustomID - 1;
         // 当前显示的RPD数组的下标
         private int currentShowIndex = -1;
 
@@ -41,29 +49,125 @@ namespace JfzRDP
 
         public MainUI()
         {
-            Trace.Listeners.Add(new TextWriterTraceListener("debug.log"));
-            Trace.AutoFlush = true;
+            //Trace.Listeners.Add(new TextWriterTraceListener("debug.log"));
+            //Trace.AutoFlush = true;
 
             // 获取mstscax.dll版本
-            string dllPath = Path.Combine(Environment.SystemDirectory, "mstscax.dll");
-            if (File.Exists(dllPath))
-            {
-                FileVersionInfo fileVersion = FileVersionInfo.GetVersionInfo(dllPath);
-                Trace.WriteLine($"mstscax.dll 版本: {fileVersion.FileVersion}");
-            }
-            else
-            {
-                Trace.WriteLine("未找到 mstscax.dll");
-            }
+            //string dllPath = Path.Combine(Environment.SystemDirectory, "mstscax.dll");
+            //if (File.Exists(dllPath))
+            //{
+            //    FileVersionInfo fileVersion = FileVersionInfo.GetVersionInfo(dllPath);
+            //    Trace.WriteLine($"mstscax.dll 版本: {fileVersion.FileVersion}");
+            //}
+            //else
+            //{
+            //    Trace.WriteLine("未找到 mstscax.dll");
+            //}
 
             InitializeComponent();
+
             this.Text = title;
-            // 载入服务器配置文件
-            LoadServerLists();
-            // 添加自定义菜单项
-            AddCustomMenuItems();
+            // 设置TabControl为所有者绘制 启用OwnerDraw模式
+            tabControl1.DrawMode = TabDrawMode.OwnerDrawFixed;
+            tabControl1.DrawItem += TabControl_DrawItem;
+            // 确保标签页内容区保持默认背景色
+            tabControl1.Appearance = TabAppearance.Normal;
+            // 为 TabControl 添加鼠标按下事件处理
+            tabControl1.MouseDown += TabControl1_MouseDown;
             // 订阅 FormClosing 事件
             this.FormClosing += MainForm_FormClosing;
+            // 载入配置文件
+            LoadServerLists();
+
+            // 设置窗体最大化
+            if (this.serverSettings.Maximized) {
+                this.WindowState = FormWindowState.Maximized;  
+            }
+
+            // 添加自定义菜单项
+            AddCustomMenuItems();
+            
+
+            // 获取主显示器分辨率
+            //int screenWidth = Screen.PrimaryScreen.Bounds.Width;
+            //int screenHeight = Screen.PrimaryScreen.Bounds.Height;
+            // 调整大小为当前分辨率的一半
+            //this.Size = new System.Drawing.Size(screenWidth/2, screenHeight/2);
+        }
+
+        private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            // 弹出确认框，默认选择“否”
+            DialogResult result = MessageBox.Show(
+                "确定要关闭窗口吗？",
+                "关闭确认",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button2 // 将默认按钮设置为“否”
+            );
+
+            // 如果用户选择“否”，则取消关闭操作
+            if (result == DialogResult.No)
+            {
+                e.Cancel = true;
+            }
+        }
+
+        private void TabControl1_MouseDown(object sender, MouseEventArgs e)
+        {
+            // 检查是否是鼠标中键（Middle Button）
+            if (e.Button == MouseButtons.Middle)
+            {
+                // 不允许关闭最后一个标签页
+                if (tabControl1.TabCount <= 1)
+                {
+                    MessageBox.Show("必须保留至少一个标签页", "不允许关闭Home");
+                    return;
+                }
+
+                // 获取鼠标位置下的标签页索引
+                for (int i = 0; i < tabControl1.TabCount; i++)
+                {
+                    Rectangle tabRect = tabControl1.GetTabRect(i);
+                    if (tabRect.Contains(e.Location))
+                    {
+                        // 确认是否要关闭（可选）
+                        if (MessageBox.Show($"确定要关闭 '{tabControl1.TabPages[i].Text}' 吗?",
+                            "确认关闭",
+                            MessageBoxButtons.YesNo) == DialogResult.Yes)
+                        {
+                            // 触发关闭前事件（可选）
+                            var args = new TabPageClosingEventArgs(tabControl1.TabPages[i]);
+                            OnTabPageClosing(args);
+
+                            if (!args.Cancel)
+                            {
+                                tabControl1.TabPages.RemoveAt(i);
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 可选：定义关闭前事件
+        public event EventHandler<TabPageClosingEventArgs> TabPageClosing;
+
+        protected virtual void OnTabPageClosing(TabPageClosingEventArgs e)
+        {
+            TabPageClosing?.Invoke(this, e);
+        }
+
+        public class TabPageClosingEventArgs : EventArgs
+        {
+            public TabPage TabPage { get; }
+            public bool Cancel { get; set; }
+
+            public TabPageClosingEventArgs(TabPage tabPage)
+            {
+                TabPage = tabPage;
+            }
         }
 
         private void LoadServerLists()
@@ -77,17 +181,260 @@ namespace JfzRDP
             }
             string jsonContent = File.ReadAllText(filePath);
             this.serverSettings = JsonSerializer.Deserialize<ServerSettings>(jsonContent);
+
+            // 清空控件、列表集合
+            //this.Controls.Clear();
+            currentShowIndex = -1;
+            JRdpObjList.Clear();
+
             // 创建rdp控件集合
             for (int i = 0; i < this.serverSettings.ServerList.Count; ++i)
             {
                 JRdpObj jRdpObj = new JRdpObj(this.serverSettings.ServerList[i], title);
-                // 绑定事件
-                jRdpObj.RdpClient.OnDisconnected += RdpClient_OnDisconnected;
                 // 索引指定
                 jRdpObj.Index = i;
                 JRdpObjList.Add(jRdpObj);
+                ServerNameToIndexMap.Add(jRdpObj.Setting.ServerName, jRdpObj.Index);
             }
 
+            // 填充服务器列表 ListBox
+            RefreshServerListBox();
+        }
+
+        private void RefreshServerListBox()
+        {
+            listBoxServerList.Items.Clear();
+            foreach (var server in serverSettings.ServerList)
+            {
+                listBoxServerList.Items.Add(server.ServerName);
+            }
+            // 清空参数信息显示
+            ClearServerInfo();
+            // 刷新公共信息
+            RefreshCommonInfo();
+        }
+
+        private void RefreshCommonInfo()
+        {
+            lblMaximizedValue.Text = serverSettings.Maximized ? "是" : "否";
+            lblWidthValue.Text = serverSettings.Width.ToString();
+            lblHeightValue.Text = serverSettings.Height.ToString();
+        }
+
+        private void ClearServerInfo()
+        {
+            lblServerValue.Text = "";
+            lblUserNameValue.Text = "";
+            lblPasswordValue.Text = "";
+            lblPortValue.Text = "";
+        }
+
+        private void listBoxServerList_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            int selectedIndex = listBoxServerList.SelectedIndex;
+            if (selectedIndex >= 0 && selectedIndex < serverSettings.ServerList.Count)
+            {
+                ServerSetting selectedServer = serverSettings.ServerList[selectedIndex];
+                lblServerValue.Text = selectedServer.Server;
+                lblUserNameValue.Text = selectedServer.UserName;
+                lblPasswordValue.Text = selectedServer.Password;
+                lblPortValue.Text = selectedServer.Port.ToString();
+            }
+            else
+            {
+                ClearServerInfo();
+            }
+        }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            int selectedIndex = listBoxServerList.SelectedIndex;
+            if (selectedIndex < 0)
+            {
+                MessageBox.Show("请先选择一个服务器", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (selectedIndex >= serverSettings.ServerList.Count)
+            {
+                MessageBox.Show("选择的服务器索引无效", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            // 调用现有的连接逻辑
+            ConnectHandle(selectedIndex);
+        }
+
+        private void button2_Click(object sender, EventArgs e)
+        {
+            // 获取用户输入的服务器信息
+            string server = textBox1.Text.Trim();
+            string userName = textBox2.Text.Trim();
+            string password = textBox3.Text;
+            int port = (int)numericUpDown1.Value;
+
+            // 验证必填字段
+            if (string.IsNullOrEmpty(server))
+            {
+                MessageBox.Show("请输入服务器地址", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (string.IsNullOrEmpty(userName))
+            {
+                MessageBox.Show("请输入账号", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            // 创建临时服务器配置，结合公共参数
+            ServerSetting tempSetting = new ServerSetting
+            {
+                ServerName = server,  // 使用服务器地址作为名称
+                Server = server,
+                UserName = userName,
+                Password = password,
+                Port = port,
+                Width = serverSettings.Width,
+                Height = serverSettings.Height
+            };
+
+            // 调用手动连接逻辑
+            ConnectHandleWithSetting(tempSetting);
+        }
+
+        private void ConnectHandleWithSetting(ServerSetting serverSetting)
+        {
+            // 创建临时的 JRdpObj 对象
+            JRdpObj tempRdpObj = new JRdpObj(serverSetting, title);
+            tempRdpObj.Index = JRdpObjList.Count;  // 使用当前列表长度作为索引
+            
+            // 添加到列表
+            JRdpObjList.Add(tempRdpObj);
+            serverSettings.ServerList.Add(serverSetting);
+            
+            int index = tempRdpObj.Index;
+
+            // 如果当前的服务器不是界面显示的服务器，则清空界面
+            if (index != currentShowIndex)
+            {
+                this.MinimumSize = new System.Drawing.Size(640, 480);
+                this.MaximumSize = new System.Drawing.Size(9999, 9999);
+                this.Size = new System.Drawing.Size(640, 480);
+                this.Text = title;
+                currentShowIndex = -1;
+            }
+
+            // 载入当前rdpClient，填满全屏
+            var rdpClient = tempRdpObj.RdpClient;
+
+            if (rdpClient == null)
+            {
+                rdpClient = new AxMsRdpClient11NotSafeForScripting();
+                // 绑定事件
+                rdpClient.OnDisconnected += RdpClient_OnDisconnected;
+                rdpClient.OnConnecting += RdpClient_OnConnecting;
+                rdpClient.OnConnected += RdpClient_OnConnected;
+                // 将新创建的实例保存
+                tempRdpObj.RdpClient = rdpClient;
+                this.JRdpObjList[index].RdpClient = rdpClient;
+            }
+            
+            AddNewRdpTab(rdpClient, serverSetting.ServerName);
+            rdpClient.Dock = DockStyle.Fill;
+            currentShowIndex = index;
+
+            // 修改分辨率：非最大化使用配置值，最大化时使用当前分辨率
+            if (this.WindowState != FormWindowState.Maximized)
+            {
+                if (deltaWidth < 0)
+                {
+                    deltaWidth = this.Size.Width - rdpClient.Size.Width;
+                }
+                if (deltaHeight < 0)
+                {
+                    deltaHeight = this.Size.Height - rdpClient.Size.Height;
+                }
+                this.Size = new System.Drawing.Size(serverSettings.Width + deltaWidth, serverSettings.Height + deltaHeight);
+                CenterToScreen();
+            }
+            // 锁定窗口分辨率
+            this.MinimumSize = new System.Drawing.Size(this.Size.Width, this.Size.Height);
+            this.MaximumSize = new System.Drawing.Size(this.Size.Width, this.Size.Height);
+
+            // 如果当前的服务器已连接，不重复下发配置
+            if (rdpClient.Connected == 1)
+            {
+                Trace.WriteLine("已连接");
+                this.Text = this.JRdpObjList[index].ConnectMsg;
+                return;
+            }
+
+            // RDP配置参数
+            SetRdpParamForManual(index, serverSetting);
+
+            this.Text = title + "    " +
+                serverSetting.ServerName + " " +
+                serverSetting.Server + " " +
+                serverSetting.UserName + " " +
+                serverSetting.Port + " " +
+                rdpClient.Size.Width + "x" + rdpClient.Size.Height + " " +
+                DateTime.Now.ToString("HH:mm:ss") + " ";
+            this.JRdpObjList[index].ConnectMsg = this.Text;
+            Trace.WriteLine(this.Text + " " + index);
+
+            // 连接服务器
+            try
+            {
+                rdpClient.Connect();
+            }
+            catch (Exception ex)
+            {
+                HandleRdpException(ex);
+            }
+        }
+
+        private void SetRdpParamForManual(int index, ServerSetting serverSetting)
+        {
+            var rdpClient = this.JRdpObjList[index].RdpClient;
+            if (rdpClient == null)
+            {
+                MessageBox.Show("rdpClient null！", "错误");
+                return;
+            }
+            rdpClient.Server = serverSetting.Server;
+            rdpClient.UserName = serverSetting.UserName;
+            rdpClient.DesktopWidth = rdpClient.Size.Width;
+            rdpClient.DesktopHeight = rdpClient.Size.Height;
+            rdpClient.ConnectingText = "";
+            rdpClient.DisconnectedText = "";
+
+            var settings = rdpClient.AdvancedSettings9;
+            settings.singleConnectionTimeout = 3;
+            settings.overallConnectionTimeout = 10;
+            settings.RedirectClipboard = true;
+            settings.RedirectDrives = false;
+            settings.RDPPort = serverSetting.Port;
+            settings.ConnectToServerConsole = true;
+            settings.ConnectToAdministerServer = true;
+            settings.AuthenticationLevel = 0;
+            settings.EnableCredSspSupport = true;
+            settings.EnableAutoReconnect = true;
+            settings.PerformanceFlags = 400;
+            settings.BandwidthDetection = true;
+            // 密码
+            IMsTscNonScriptable secured = (IMsTscNonScriptable)rdpClient.GetOcx();
+            secured.ClearTextPassword = serverSetting.Password;
+        }
+
+        private void RdpClient_OnConnected(object sender, EventArgs e)
+        {
+            var str = ((AxMsRdpClient9NotSafeForScripting)sender).Server;
+            Trace.WriteLine("RdpClient_OnConnected " + str);
+            MessageBox.Show("RdpClient_OnConnected " + str, "123");
+        }
+
+        private void RdpClient_OnConnecting(object sender, EventArgs e)
+        {
+            var str = ((AxMsRdpClient9NotSafeForScripting)sender).Server;
+            Trace.WriteLine("RdpClient_OnConnecting " + str);
+            MessageBox.Show("RdpClient_OnConnecting " + str, "123");
         }
 
         private void CreateDefaultServerFile(string filePath)
@@ -119,7 +466,11 @@ namespace JfzRDP
                 serverSettingsObj.ServerList.Add(server1);
                 serverSettingsObj.ServerList.Add(server2);
                 // 将对象序列化为 JSON 字符串
-                var options = new JsonSerializerOptions { WriteIndented = true };
+                var options = new JsonSerializerOptions
+                {
+                    Encoder = JavaScriptEncoder.Create(UnicodeRanges.BasicLatin, UnicodeRanges.CjkUnifiedIdeographs),
+                    WriteIndented = true // JSON带缩进
+                };
                 string serverSettingsStr = JsonSerializer.Serialize(serverSettingsObj, options);
                 // 创建文件并写入字符串
                 File.WriteAllText(filePath, serverSettingsStr, Encoding.UTF8);
@@ -131,30 +482,17 @@ namespace JfzRDP
             }
         }
 
-        private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
-        {
-            // 弹出确认框，默认选择“否”
-            DialogResult result = MessageBox.Show(
-                "确定要关闭窗口吗？",
-                "关闭确认",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question,
-                MessageBoxDefaultButton.Button2 // 将默认按钮设置为“否”
-            );
-
-            // 如果用户选择“否”，则取消关闭操作
-            if (result == DialogResult.No)
-            {
-                e.Cancel = true;
-            }
-        }
-
         private void AddCustomMenuItems()
         {
             // 获取系统菜单句柄
             IntPtr systemMenuHandle = GetSystemMenu(this.Handle, false);
             // 添加分隔符
             AppendMenu(systemMenuHandle, MF_SEPARATOR, 0, string.Empty);
+
+            // 刷新配置
+            AppendMenu(systemMenuHandle, MF_STRING, this.loadConfigID, "重载配置");
+            AppendMenu(systemMenuHandle, MF_SEPARATOR, 0, string.Empty);
+
             // 添加服务器列表
             int i = 0;
             foreach (ServerSetting server in serverSettings.ServerList)
@@ -163,8 +501,8 @@ namespace JfzRDP
                 ++i;
             }
             this.disconnectID = firstCustomID + i;
-            // 添加分隔符
             AppendMenu(systemMenuHandle, MF_SEPARATOR, 0, string.Empty);
+
             // 断开当前服务器
             AppendMenu(systemMenuHandle, MF_STRING, this.disconnectID, "断开当前服务器");
         }
@@ -181,6 +519,10 @@ namespace JfzRDP
                 {
                     DisconnectHandle(currentShowIndex);
                 }
+                else if (menuItemID == loadConfigID)
+                {
+                    LoadServerLists();
+                }
                 else if (menuItemID >= firstCustomID && menuItemID < disconnectID)
                 {
                     ConnectHandle(menuItemID - firstCustomID);
@@ -190,12 +532,25 @@ namespace JfzRDP
             base.WndProc(ref m);
         }
 
+        private void AddNewRdpTab(AxMsRdpClient11NotSafeForScripting rdpClient, String ServerName)
+        {
+            // 创建新标签页
+            TabPage tabPage = new TabPage(ServerName);
+
+            // 将RDP控件添加到标签页
+            tabPage.Controls.Add(rdpClient);
+
+            // 添加标签页到TabControl
+            tabControl1.TabPages.Add(tabPage);
+            tabControl1.SelectedTab = tabPage;
+        }
+
         private void ConnectHandle(int index)
         {
             // 如果当前的服务器不是界面显示的服务器，则清空界面
             if (index != currentShowIndex)
             {
-                this.Controls.Clear();
+                //this.Controls.Clear();
                 // 修改分辨率
                 this.MinimumSize = new System.Drawing.Size(640, 480);
                 this.MaximumSize = new System.Drawing.Size(9999, 9999);
@@ -208,11 +563,20 @@ namespace JfzRDP
             var rdpClient = this.JRdpObjList[index].RdpClient;
             ServerSetting serverSetting = serverSettings.ServerList[index];
 
-            ((System.ComponentModel.ISupportInitialize)(rdpClient)).BeginInit();
-            this.Controls.Add(rdpClient);
-            currentShowIndex = index;
+            if(rdpClient == null)
+            {
+                rdpClient = new AxMsRdpClient11NotSafeForScripting();
+                // 绑定事件
+                rdpClient.OnDisconnected += RdpClient_OnDisconnected;
+                rdpClient.OnConnecting += RdpClient_OnConnecting;
+                rdpClient.OnConnected += RdpClient_OnConnected;
+                // 将新创建的实例保存回 JRdpObjList
+                this.JRdpObjList[index].RdpClient = rdpClient; 
+            }
+            //this.Controls.Add(rdpClient);
+            AddNewRdpTab(rdpClient, serverSetting.ServerName);
             rdpClient.Dock = DockStyle.Fill;
-            ((System.ComponentModel.ISupportInitialize)(rdpClient)).EndInit();
+            currentShowIndex = index;
 
             // 修改分辨率：非最大化使用配置值，最大化时使用当前分辨率
             if (this.WindowState != FormWindowState.Maximized)
@@ -227,7 +591,7 @@ namespace JfzRDP
                     deltaHeight = this.Size.Height - rdpClient.Size.Height;
                 }
                 // 让整个窗口分辨率=RDP显示分辨率+边框(deltaWidth, deltaHeight)
-                this.Size = new System.Drawing.Size(serverSetting.Width + deltaWidth, serverSetting.Height + deltaHeight);
+                this.Size = new System.Drawing.Size(serverSettings.Width + deltaWidth, serverSettings.Height + deltaHeight);
                 // 窗体重新居中
                 CenterToScreen();
             }
@@ -243,6 +607,10 @@ namespace JfzRDP
                 return;
             }
 
+            if (rdpClient == null)
+            {
+                MessageBox.Show("rdpClient null！" + index, "111");
+            }
             // RDP配置参数
             SetRdpParam(index, serverSetting);
 
@@ -270,10 +638,16 @@ namespace JfzRDP
         private void SetRdpParam(int index, ServerSetting serverSetting)
         {
             var rdpClient = this.JRdpObjList[index].RdpClient;
+            if (rdpClient == null)
+            {
+                MessageBox.Show("rdpClient2 null！" + index, "111");
+            }
             rdpClient.Server = serverSetting.Server;
             rdpClient.UserName = serverSetting.UserName;
             rdpClient.DesktopWidth = rdpClient.Size.Width;
             rdpClient.DesktopHeight = rdpClient.Size.Height;
+            //rdpClient.DesktopWidth = serverSetting.Width;
+            //rdpClient.DesktopHeight = serverSetting.Height;
             rdpClient.ConnectingText = "";
             rdpClient.DisconnectedText = "";
 
@@ -301,15 +675,18 @@ namespace JfzRDP
             {
                 try
                 {
+                    // 移除 RDP 客户端控件
                     var rdpClient = this.JRdpObjList[index].RdpClient;
+                    //this.Controls.Remove(rdpClient);
+                    currentShowIndex = -1;
+
+                    // 断开连接
                     if (rdpClient.Connected == 1)
                     {
                         rdpClient.Disconnect();
+                        rdpClient.Dispose(); // 释放资源
+                        rdpClient = null; // 置空引用
                     }
-                    // 移除 RDP 客户端控件
-                    this.Controls.Remove(rdpClient);
-                    currentShowIndex = -1;
-                    // rdpClient.Dispose(); // 释放资源
                 }
                 catch (Exception)
                 {
@@ -387,10 +764,76 @@ namespace JfzRDP
                     reason = $"未知，错误代码 {code}";
                     break;
             }
+
+            var index = getIndexByRdpClient((AxMsRdpClient9NotSafeForScripting)sender);
+            // 移除 RDP 客户端控件
+            // this.Controls.Remove((AxMsRdpClient9NotSafeForScripting)sender);
+            // currentShowIndex = -1;
+
             // 显示断开连接信息
-            this.Text = title + " Error:" + $"连接已断开，原因：{reason}";
+            this.Text = title + " Error:" + $" {index} {currentShowIndex} 连接已断开，原因：{reason}";
             Trace.WriteLine($"连接已断开，原因：{reason}");
             ((AxMsRdpClient9NotSafeForScripting)sender).DisconnectedText = $"连接已断开，原因：{reason}";
+            MessageBox.Show("RdpClient_OnDisconnected " + this.Text, "123");
         }
+
+        int getIndexByRdpClient(AxMsRdpClient9NotSafeForScripting rdpClient)
+        {
+            foreach (JRdpObj jRdpObj in JRdpObjList)
+            {
+                if (jRdpObj.RdpClient.Server == rdpClient.Server &&
+                    jRdpObj.RdpClient.UserName == rdpClient.UserName &&
+                    jRdpObj.RdpClient.AdvancedSettings9.RDPPort == rdpClient.AdvancedSettings9.RDPPort)
+                {
+                    return jRdpObj.Index;
+                }
+            }
+            return -1;
+        }
+
+        private void tabControl1_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            // 标题改为当前RDP连接信息
+            string tabText = tabControl1.SelectedTab.Text;
+            if (ServerNameToIndexMap.TryGetValue(tabText, out int result))
+            {
+                this.Text = this.JRdpObjList[result].ConnectMsg;
+            }
+            if(tabControl1.SelectedIndex == 0)
+            {
+                this.Text = title;
+            }
+        }
+
+        private void TabControl_DrawItem(object sender, DrawItemEventArgs e)
+        {
+            TabControl tabControl = sender as TabControl;
+            TabPage tabPage = tabControl.TabPages[e.Index];
+
+            // 定义颜色
+            Color backColor = e.Index == tabControl.SelectedIndex
+                ? Color.Green  // 选中标签为绿色
+                : SystemColors.Control;  // 未选中标签为默认色
+
+            Color textColor = e.Index == tabControl.SelectedIndex
+                ? Color.White  // 选中标签文字为白色
+                : SystemColors.ControlText;  // 未选中标签文字为默认色
+
+            // 绘制标签背景
+            using (Brush backBrush = new SolidBrush(backColor))
+            {
+                e.Graphics.FillRectangle(backBrush, e.Bounds);
+            }
+
+            // 绘制标签文本（居中）
+            TextRenderer.DrawText(
+                e.Graphics,
+                tabPage.Text,
+                new Font("微软雅黑", 8, FontStyle.Regular),
+                e.Bounds,
+                textColor,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        }
+
     }
 }
