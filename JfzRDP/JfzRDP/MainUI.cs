@@ -197,6 +197,230 @@ namespace JfzRDP
                 ServerNameToIndexMap.Add(jRdpObj.Setting.ServerName, jRdpObj.Index);
             }
 
+            // 填充服务器列表 ListBox
+            RefreshServerListBox();
+        }
+
+        private void RefreshServerListBox()
+        {
+            listBoxServerList.Items.Clear();
+            foreach (var server in serverSettings.ServerList)
+            {
+                listBoxServerList.Items.Add(server.ServerName);
+            }
+            // 清空参数信息显示
+            ClearServerInfo();
+            // 刷新公共信息
+            RefreshCommonInfo();
+        }
+
+        private void RefreshCommonInfo()
+        {
+            lblMaximizedValue.Text = serverSettings.Maximized ? "是" : "否";
+            lblWidthValue.Text = serverSettings.Width.ToString();
+            lblHeightValue.Text = serverSettings.Height.ToString();
+        }
+
+        private void ClearServerInfo()
+        {
+            lblServerValue.Text = "";
+            lblUserNameValue.Text = "";
+            lblPasswordValue.Text = "";
+            lblPortValue.Text = "";
+        }
+
+        private void listBoxServerList_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            int selectedIndex = listBoxServerList.SelectedIndex;
+            if (selectedIndex >= 0 && selectedIndex < serverSettings.ServerList.Count)
+            {
+                ServerSetting selectedServer = serverSettings.ServerList[selectedIndex];
+                lblServerValue.Text = selectedServer.Server;
+                lblUserNameValue.Text = selectedServer.UserName;
+                lblPasswordValue.Text = selectedServer.Password;
+                lblPortValue.Text = selectedServer.Port.ToString();
+            }
+            else
+            {
+                ClearServerInfo();
+            }
+        }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            int selectedIndex = listBoxServerList.SelectedIndex;
+            if (selectedIndex < 0)
+            {
+                MessageBox.Show("请先选择一个服务器", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (selectedIndex >= serverSettings.ServerList.Count)
+            {
+                MessageBox.Show("选择的服务器索引无效", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            // 调用现有的连接逻辑
+            ConnectHandle(selectedIndex);
+        }
+
+        private void button2_Click(object sender, EventArgs e)
+        {
+            // 获取用户输入的服务器信息
+            string server = textBox1.Text.Trim();
+            string userName = textBox2.Text.Trim();
+            string password = textBox3.Text;
+            int port = (int)numericUpDown1.Value;
+
+            // 验证必填字段
+            if (string.IsNullOrEmpty(server))
+            {
+                MessageBox.Show("请输入服务器地址", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (string.IsNullOrEmpty(userName))
+            {
+                MessageBox.Show("请输入账号", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            // 创建临时服务器配置，结合公共参数
+            ServerSetting tempSetting = new ServerSetting
+            {
+                ServerName = server,  // 使用服务器地址作为名称
+                Server = server,
+                UserName = userName,
+                Password = password,
+                Port = port,
+                Width = serverSettings.Width,
+                Height = serverSettings.Height
+            };
+
+            // 调用手动连接逻辑
+            ConnectHandleWithSetting(tempSetting);
+        }
+
+        private void ConnectHandleWithSetting(ServerSetting serverSetting)
+        {
+            // 创建临时的 JRdpObj 对象
+            JRdpObj tempRdpObj = new JRdpObj(serverSetting, title);
+            tempRdpObj.Index = JRdpObjList.Count;  // 使用当前列表长度作为索引
+            
+            // 添加到列表
+            JRdpObjList.Add(tempRdpObj);
+            serverSettings.ServerList.Add(serverSetting);
+            
+            int index = tempRdpObj.Index;
+
+            // 如果当前的服务器不是界面显示的服务器，则清空界面
+            if (index != currentShowIndex)
+            {
+                this.MinimumSize = new System.Drawing.Size(640, 480);
+                this.MaximumSize = new System.Drawing.Size(9999, 9999);
+                this.Size = new System.Drawing.Size(640, 480);
+                this.Text = title;
+                currentShowIndex = -1;
+            }
+
+            // 载入当前rdpClient，填满全屏
+            var rdpClient = tempRdpObj.RdpClient;
+
+            if (rdpClient == null)
+            {
+                rdpClient = new AxMsRdpClient11NotSafeForScripting();
+                // 绑定事件
+                rdpClient.OnDisconnected += RdpClient_OnDisconnected;
+                rdpClient.OnConnecting += RdpClient_OnConnecting;
+                rdpClient.OnConnected += RdpClient_OnConnected;
+                // 将新创建的实例保存
+                tempRdpObj.RdpClient = rdpClient;
+                this.JRdpObjList[index].RdpClient = rdpClient;
+            }
+            
+            AddNewRdpTab(rdpClient, serverSetting.ServerName);
+            rdpClient.Dock = DockStyle.Fill;
+            currentShowIndex = index;
+
+            // 修改分辨率：非最大化使用配置值，最大化时使用当前分辨率
+            if (this.WindowState != FormWindowState.Maximized)
+            {
+                if (deltaWidth < 0)
+                {
+                    deltaWidth = this.Size.Width - rdpClient.Size.Width;
+                }
+                if (deltaHeight < 0)
+                {
+                    deltaHeight = this.Size.Height - rdpClient.Size.Height;
+                }
+                this.Size = new System.Drawing.Size(serverSettings.Width + deltaWidth, serverSettings.Height + deltaHeight);
+                CenterToScreen();
+            }
+            // 锁定窗口分辨率
+            this.MinimumSize = new System.Drawing.Size(this.Size.Width, this.Size.Height);
+            this.MaximumSize = new System.Drawing.Size(this.Size.Width, this.Size.Height);
+
+            // 如果当前的服务器已连接，不重复下发配置
+            if (rdpClient.Connected == 1)
+            {
+                Trace.WriteLine("已连接");
+                this.Text = this.JRdpObjList[index].ConnectMsg;
+                return;
+            }
+
+            // RDP配置参数
+            SetRdpParamForManual(index, serverSetting);
+
+            this.Text = title + "    " +
+                serverSetting.ServerName + " " +
+                serverSetting.Server + " " +
+                serverSetting.UserName + " " +
+                serverSetting.Port + " " +
+                rdpClient.Size.Width + "x" + rdpClient.Size.Height + " " +
+                DateTime.Now.ToString("HH:mm:ss") + " ";
+            this.JRdpObjList[index].ConnectMsg = this.Text;
+            Trace.WriteLine(this.Text + " " + index);
+
+            // 连接服务器
+            try
+            {
+                rdpClient.Connect();
+            }
+            catch (Exception ex)
+            {
+                HandleRdpException(ex);
+            }
+        }
+
+        private void SetRdpParamForManual(int index, ServerSetting serverSetting)
+        {
+            var rdpClient = this.JRdpObjList[index].RdpClient;
+            if (rdpClient == null)
+            {
+                MessageBox.Show("rdpClient null！", "错误");
+                return;
+            }
+            rdpClient.Server = serverSetting.Server;
+            rdpClient.UserName = serverSetting.UserName;
+            rdpClient.DesktopWidth = rdpClient.Size.Width;
+            rdpClient.DesktopHeight = rdpClient.Size.Height;
+            rdpClient.ConnectingText = "";
+            rdpClient.DisconnectedText = "";
+
+            var settings = rdpClient.AdvancedSettings9;
+            settings.singleConnectionTimeout = 3;
+            settings.overallConnectionTimeout = 10;
+            settings.RedirectClipboard = true;
+            settings.RedirectDrives = false;
+            settings.RDPPort = serverSetting.Port;
+            settings.ConnectToServerConsole = true;
+            settings.ConnectToAdministerServer = true;
+            settings.AuthenticationLevel = 0;
+            settings.EnableCredSspSupport = true;
+            settings.EnableAutoReconnect = true;
+            settings.PerformanceFlags = 400;
+            settings.BandwidthDetection = true;
+            // 密码
+            IMsTscNonScriptable secured = (IMsTscNonScriptable)rdpClient.GetOcx();
+            secured.ClearTextPassword = serverSetting.Password;
         }
 
         private void RdpClient_OnConnected(object sender, EventArgs e)
