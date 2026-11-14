@@ -1,14 +1,17 @@
-﻿
-namespace JfzRDP
+namespace JfzRdp.Models
 {
-    public class ServerSetting
+    public sealed class ConnectionInfo
     {
-        public string ServerName { get; set; }
+        public string ConnectionKey { get; set; }
+
+        public string TabTitle { get; set; }
+
         public string Server { get; set; }
+
         public string UserName { get; set; }
+
         public string Password { get; set; }
+
         public int Port { get; set; }
-        public int Width { get; set; }
-        public int Height { get; set; }
     }
 }
