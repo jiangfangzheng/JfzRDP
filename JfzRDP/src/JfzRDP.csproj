@@ -55,6 +55,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AboutForm.cs" />
     <Compile Include="Controls\MiddleClickTabControl.cs" />
     <Compile Include="MainForm.cs">
       <SubType>Form</SubType>

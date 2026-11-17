@@ -24,24 +24,24 @@ namespace JfzRdp.Models
             return new AppConfig
             {
                 Maximized = false,
-                Width = 1920,
-                Height = 1080,
+                Width = 1280,
+                Height = 720,
                 ServerList = new List<ServerEntry>
                 {
                     new ServerEntry
                     {
-                        ServerName = "jfz123",
-                        Server = "127.0.0.1",
-                        UserName = "Sandeepin",
+                        ServerName = "异想家的PC",
+                        Server = "192.168.1.2",
+                        UserName = "jfz",
                         Password = "123456",
                         Port = 3389
                     },
                     new ServerEntry
                     {
-                        ServerName = "JfzVictus-192",
-                        Server = "192.168.233.168",
+                        ServerName = "Jfz-Victus",
+                        Server = "192.168.1.3",
                         UserName = "Sandeepin",
-                        Password = "1",
+                        Password = "abcdef",
                         Port = 3389
                     }
                 }
@@ -57,12 +57,12 @@ namespace JfzRdp.Models
 
             if (config.Width < 320 || config.Width > 7680)
             {
-                config.Width = 1920;
+                config.Width = 1280;
             }
 
             if (config.Height < 240 || config.Height > 4320)
             {
-                config.Height = 1080;
+                config.Height = 720;
             }
 
             if (config.ServerList == null)

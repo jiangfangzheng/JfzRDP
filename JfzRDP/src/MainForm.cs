@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using JfzRdp.Controls;
 using JfzRdp.Models;
@@ -10,6 +11,20 @@ namespace JfzRdp
     public sealed class MainForm : Form
     {
         private const string RemoteTabPrefix = "\U0001F5A5";
+        private const int WmSysCommand = 0x0112;
+        private const uint MfString = 0x00000000;
+        private const uint MfSeparator = 0x00000800;
+        private const int AboutCommandId = 0x1000;
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetSystemMenu(IntPtr hWnd, bool bRevert);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern bool AppendMenu(
+            IntPtr hMenu,
+            uint uFlags,
+            UIntPtr uIDNewItem,
+            string lpNewItem);
 
         private readonly AppConfig _config;
         private readonly Dictionary<string, TabPage> _connectionTabs =
@@ -34,6 +49,7 @@ namespace JfzRdp
         private int _tabPageInsetBottom;
 
         private bool _allowClose;
+        private IntPtr _systemMenuHandle;
 
         public MainForm(AppConfig config)
         {
@@ -589,6 +605,44 @@ namespace JfzRdp
                 {
                     rdpTab.CloseConnection();
                 }
+            }
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+
+            var systemMenu = GetSystemMenu(Handle, false);
+            if (systemMenu != IntPtr.Zero && systemMenu != _systemMenuHandle)
+            {
+                AppendMenu(systemMenu, MfSeparator, UIntPtr.Zero, null);
+                AppendMenu(
+                    systemMenu,
+                    MfString,
+                    new UIntPtr(AboutCommandId),
+                    "关于(&A)...");
+                _systemMenuHandle = systemMenu;
+            }
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WmSysCommand
+                && (m.WParam.ToInt32() & 0xFFF0) == AboutCommandId)
+            {
+                ShowAboutDialog();
+                return;
+            }
+
+            base.WndProc(ref m);
+        }
+
+        private void ShowAboutDialog()
+        {
+            using (var aboutForm = new AboutForm())
+            {
+                aboutForm.Icon = Icon;
+                aboutForm.ShowDialog(this);
             }
         }
 
