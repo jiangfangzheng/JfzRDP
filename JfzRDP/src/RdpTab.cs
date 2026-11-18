@@ -11,8 +11,6 @@ namespace JfzRdp
     /// </summary>
     public sealed class RdpTab : UserControl
     {
-        private const int MaxReconnectAttempts = 3;
-        private const int ReconnectDelayMilliseconds = 3000;
         private const int ConnectTimeoutMilliseconds = 20000;
 
         private readonly ConnectionInfo _connection;
@@ -20,17 +18,12 @@ namespace JfzRdp
         private readonly int _configuredWidth;
         private readonly int _configuredHeight;
         private readonly AxMsRdpClient10NotSafeForScripting _rdp;
-        private readonly Timer _reconnectTimer;
         private readonly Timer _watchdogTimer;
         private readonly Timer _resizeTimer;
 
         private bool _started;
         private bool _closeRequested;
         private bool _disposed;
-        private bool _hasConnected;
-        private bool _logonFailed;
-        private bool _reconnectPending;
-        private int _reconnectAttempts;
 
         public RdpTab(ConnectionInfo connection, bool maximized, int configuredWidth, int configuredHeight)
         {
@@ -53,10 +46,6 @@ namespace JfzRdp
             _rdp.OnLoginComplete += Rdp_OnLoginComplete;
             _rdp.OnDisconnected += Rdp_OnDisconnected;
             _rdp.OnFatalError += Rdp_OnFatalError;
-            _rdp.OnLogonError += Rdp_OnLogonError;
-
-            _reconnectTimer = new Timer { Interval = ReconnectDelayMilliseconds };
-            _reconnectTimer.Tick += ReconnectTimer_Tick;
 
             _watchdogTimer = new Timer { Interval = ConnectTimeoutMilliseconds };
             _watchdogTimer.Tick += WatchdogTimer_Tick;
@@ -165,17 +154,8 @@ namespace JfzRdp
             catch (Exception ex)
             {
                 _watchdogTimer.Stop();
-
-                if (_reconnectAttempts > 0)
-                {
-                    _rdp.DisconnectedText = "重连失败";
-                    ScheduleReconnect();
-                }
-                else
-                {
-                    _rdp.DisconnectedText = "连接失败";
-                    ShowConnectError("无法发起 RDP 连接。\r\n\r\n" + ex.Message);
-                }
+                _rdp.DisconnectedText = "连接失败";
+                ShowConnectError("无法发起 RDP 连接。\r\n\r\n" + ex.Message);
             }
         }
 
@@ -195,7 +175,7 @@ namespace JfzRdp
             _rdp.AdvancedSettings2.RDPPort = _connection.Port;
             _rdp.AdvancedSettings2.ClearTextPassword = _connection.Password ?? string.Empty;
             _rdp.AdvancedSettings2.SmartSizing = _maximized;
-            _rdp.AdvancedSettings3.EnableAutoReconnect = false;
+            _rdp.AdvancedSettings3.EnableAutoReconnect = false; // 禁止 ActiveX 内置自动重连
 
             // 这些设置位于较新的接口上；RDP 8.1 及以上系统均可用。
             _rdp.AdvancedSettings9.RedirectClipboard = true;
@@ -230,12 +210,7 @@ namespace JfzRdp
                 return;
             }
 
-            _hasConnected = true;
-            _logonFailed = false;
-            _reconnectAttempts = 0;
-            _reconnectPending = false;
             _watchdogTimer.Stop();
-            _reconnectTimer.Stop();
             _rdp.DisconnectedText = "连接已断开";
 
             if (_maximized)
@@ -259,13 +234,8 @@ namespace JfzRdp
                 return;
             }
 
-            // 1 表示客户端主动断开，不进行自动重连。
-            if (e != null && e.discReason == 1)
-            {
-                return;
-            }
-
-            ScheduleReconnect();
+            // 意外断线后不自动重连，避免抢占远程电脑前真实用户的会话。
+            _rdp.DisconnectedText = "连接已断开";
         }
 
         private void Rdp_OnFatalError(object sender, IMsTscAxEvents_OnFatalErrorEvent e)
@@ -275,95 +245,19 @@ namespace JfzRdp
                 return;
             }
 
-            if (_hasConnected)
-            {
-                ScheduleReconnect();
-            }
-            else
-            {
-                _rdp.DisconnectedText = "连接失败";
-            }
-        }
-
-        private void Rdp_OnLogonError(object sender, IMsTscAxEvents_OnLogonErrorEvent e)
-        {
-            // 登录失败不是“意外断联”，重试通常没有意义。
-            _logonFailed = true;
-        }
-
-        private void ScheduleReconnect()
-        {
-            if (_closeRequested || _disposed || !_hasConnected || _logonFailed)
-            {
-                return;
-            }
-
-            if (_reconnectAttempts >= MaxReconnectAttempts)
-            {
-                MarkReconnectFailed();
-                return;
-            }
-
-            if (_reconnectPending)
-            {
-                return;
-            }
-
-            _reconnectPending = true;
-            _reconnectAttempts++;
-            _rdp.DisconnectedText = "连接已断开，正在重连（"
-                + _reconnectAttempts + "/" + MaxReconnectAttempts + "）...";
-
-            _reconnectTimer.Stop();
-            _reconnectTimer.Start();
-        }
-
-        private void MarkReconnectFailed()
-        {
-            _reconnectPending = false;
-            _rdp.DisconnectedText = "连接已断开（自动重连 " + MaxReconnectAttempts + " 次失败）";
-        }
-
-        private void ReconnectTimer_Tick(object sender, EventArgs e)
-        {
-            _reconnectTimer.Stop();
-            _reconnectPending = false;
-
-            if (_closeRequested || _disposed)
-            {
-                return;
-            }
-
-            if (_rdp.Connected != 0)
-            {
-                return;
-            }
-
-            ConnectCore();
+            _rdp.DisconnectedText = "连接失败";
         }
 
         private void WatchdogTimer_Tick(object sender, EventArgs e)
         {
             _watchdogTimer.Stop();
 
-            if (_closeRequested || _disposed)
+            if (_closeRequested || _disposed || _rdp.Connected != 0)
             {
                 return;
             }
 
-            if (_rdp.Connected != 0)
-            {
-                return;
-            }
-
-            if (_hasConnected)
-            {
-                ScheduleReconnect();
-            }
-            else
-            {
-                _rdp.DisconnectedText = "连接超时";
-            }
+            _rdp.DisconnectedText = "连接超时";
         }
 
         private void QueueSessionResize()
@@ -424,7 +318,6 @@ namespace JfzRdp
 
         private void StopTimers()
         {
-            _reconnectTimer.Stop();
             _watchdogTimer.Stop();
             _resizeTimer.Stop();
         }
@@ -452,7 +345,6 @@ namespace JfzRdp
                 _closeRequested = true;
                 StopTimers();
 
-                _reconnectTimer.Dispose();
                 _watchdogTimer.Dispose();
                 _resizeTimer.Dispose();
 
@@ -460,7 +352,6 @@ namespace JfzRdp
                 _rdp.OnLoginComplete -= Rdp_OnLoginComplete;
                 _rdp.OnDisconnected -= Rdp_OnDisconnected;
                 _rdp.OnFatalError -= Rdp_OnFatalError;
-                _rdp.OnLogonError -= Rdp_OnLogonError;
 
                 try
                 {
